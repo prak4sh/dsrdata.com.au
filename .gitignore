@@ -10,4 +10,8 @@ credentials.json
 token.json
 *.log
 cookies.json
+__pycache__
+.gitignore
+.env
 
+.env
