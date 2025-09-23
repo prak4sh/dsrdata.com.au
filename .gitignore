@@ -3,6 +3,8 @@ login.txt
 .venv
 /images
 /tmp
-
+logs.txt
+token.json
+error.log
 
 
