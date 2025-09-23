@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
 from rich import print
+import pandas as pd
+import numpy as np
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -94,46 +96,118 @@ class SheetManager:
             self.print_info(f"Error connecting to Google Sheets API: {e}", mtype='ERR')
             return None
         
-    def log_to_sheet(self, info):
+    def get_or_create_sheet(self, sheet_name):
+        """
+        Get sheet ID by name, or create it if it doesn't exist.
+        Returns the sheet ID (gid) of the specified sheet.
+        """
+        try:
+            # Get spreadsheet metadata to check existing sheets
+            spreadsheet = self.service.spreadsheets().get(spreadsheetId=self.sheet_id).execute()
+            sheets = spreadsheet.get('sheets', [])
+            
+            # Check if sheet with given name already exists
+            for sheet in sheets:
+                if sheet['properties']['title'] == sheet_name:
+                    sheet_id = sheet['properties']['sheetId']
+                    self.print_info(f"Found existing sheet: {sheet_name}")
+                    return sheet_id
+            
+            # Sheet doesn't exist, create it
+            requests = [{
+                'addSheet': {
+                    'properties': {
+                        'title': sheet_name
+                    }
+                }
+            }]
+            
+            response = self.service.spreadsheets().batchUpdate(
+                spreadsheetId=self.sheet_id,
+                body={'requests': requests}
+            ).execute()
+            
+            new_sheet_id = response['replies'][0]['addSheet']['properties']['sheetId']
+            self.print_info(f"Created new sheet: {sheet_name}")
+            return new_sheet_id
+            
+        except Exception as e:
+            self.print_info(f"Error getting/creating sheet '{sheet_name}': {e}", mtype='ERR')
+            return None
+
+    def log_to_sheet(self, info, sheet_name="Sheet1"):
+        """
+        Log data to sheet - handles both single dict and list of dicts
+        """
+        if isinstance(info, list):
+            self.log_batch_to_sheet(info, sheet_name)
+        elif isinstance(info, dict):
+            self.log_batch_to_sheet([info], sheet_name)
+        else:
+            self.print_info("Invalid data format. Expected dict or list of dicts", mtype='ERR')
+
+    def log_batch_to_sheet(self, data_list, sheet_name="Sheet1"):
+        """
+        Log a list of dictionaries to sheet in a single batch operation.
+        """
         if not self.service:
             self.print_info("No valid Google Sheets connection", mtype='ERR')
             return
         if not self.sheet_id:
             self.print_info("No valid sheet ID", mtype='ERR')
             return
+        if not data_list:
+            self.print_info("No data to log", mtype='WRN')
+            return
+        
         try:
-            range_name = "Sheet1!A1:Z1"
-            result = self.service.spreadsheets().values().get(
+            # Ensure the sheet exists
+            sheet_gid = self.get_or_create_sheet(sheet_name)
+            if sheet_gid is None:
+                self.print_info(f"Failed to get or create sheet: {sheet_name}", mtype='ERR')
+                return
+            
+            # Get headers from first dictionary
+            headers = list(data_list[0].keys())
+            
+            # Prepare all data rows
+            all_values = [headers]  # Start with headers
+            
+            # Add all data rows - handle NaN values
+            for data in data_list:
+                row = []
+                for header in headers:
+                    value = data.get(header, '')
+                    # Convert NaN, None, and other problematic values to empty string
+                    if pd.isna(value) or value is None or str(value).lower() == 'nan':
+                        row.append('')
+                    else:
+                        # Convert to string to ensure JSON serialization
+                        row.append(str(value))
+                all_values.append(row)
+
+            # Clear and write everything
+            self.service.spreadsheets().values().clear(
                 spreadsheetId=self.sheet_id,
-                range=range_name
+                range=f"{sheet_name}!A:Z"
             ).execute()
-            headers = result.get('values', [])
-            info_keys = list(info.keys())
-
-            # If no headers, write them
-            if not headers or headers[0] != info_keys:
-                self.service.spreadsheets().values().update(
-                    spreadsheetId=self.sheet_id,
-                    range="Sheet1!A1",
-                    valueInputOption="RAW",
-                    body={'values': [info_keys]}
-                ).execute()
-
-            # Append the row
-            values = [list(info.values())]
-            body = {'values': values}
-            result = self.service.spreadsheets().values().append(
+            
+            # Write all data
+            body = {'values': all_values}
+            result = self.service.spreadsheets().values().update(
                 spreadsheetId=self.sheet_id,
-                range="Sheet1!A1",
+                range=f"{sheet_name}!A1",
                 valueInputOption="RAW",
-                insertDataOption="INSERT_ROWS",
                 body=body
             ).execute()
-            self.print_info(f"Logged info to Google Sheet: {result.get('updates').get('updatedCells')} cells appended")
+            
+            cells_updated = result.get('updatedCells', 0)
+            self.print_info(f"Batch logged {len(data_list)} records to sheet '{sheet_name}': {cells_updated} cells updated")
+            
         except Exception as e:
-            self.print_info(f"Error logging to Google Sheet: {e}", mtype='ERR')
+            self.print_info(f"Error batch logging to Google Sheet '{sheet_name}': {e}", mtype='ERR')
 
-if __name__ == "__main__":
+def main():
     manager = SheetManager("DSR Data")
     sample_info = {
         "Timestamp": manager.time_now(),
@@ -141,5 +215,23 @@ if __name__ == "__main__":
         "Data Point 2": "Value 2"
     }
     manager.log_to_sheet(sample_info)
+
+    # Batch logging example
+    batch_data = [
+        {
+            "Timestamp": manager.time_now(),
+            "Data Point 1": "Batch Value 1",
+            "Data Point 2": "Batch Value 2"
+        },
+        {
+            "Timestamp": manager.time_now(),
+            "Data Point 1": "Batch Value 3",
+            "Data Point 2": "Batch Value 4"
+        }
+    ]
+    manager.log_batch_to_sheet(batch_data)
+
+if __name__ == "__main__":
+    main()
 
 

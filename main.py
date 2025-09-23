@@ -185,7 +185,6 @@ def get_data(min_dsr, max_dsr,min_renters = 0, max_renters=100 ,state=None, save
     for mkt in mkts:
         mkt_stats = mkt['mkt_stats']
         info = {
-            'Timestamp': time_now(),
             'State': mkt['st'],
             'Post Code': mkt['pc'],
             'Property Type': mkt['pt'],
@@ -203,8 +202,12 @@ def get_data(min_dsr, max_dsr,min_renters = 0, max_renters=100 ,state=None, save
             'Vacancy rate': mkt_stats.get('VACANCY'),
             'Gross rental yield': mkt_stats.get('YIELD'),
         }
-        if SHEET_MANAGER:
-            SHEET_MANAGER.log_to_sheet(info)
+        lookup_info = {
+            'Suburb': mkt['lo'],
+            'State': mkt['st'],
+            'Post Code': mkt['pc'],
+            'Property Type': mkt['pt']
+        }
         infos.append(info)
         more = True
     sleep_time = random.uniform(2, 5)
@@ -296,6 +299,14 @@ def remove_duplicates(filename='markets.csv'):
     
     # Save the DataFrame back to the CSV file
     df.to_csv(new_filename, index=False)
+
+    df_lookup_data = df.loc[:, ['Suburb', 'State', 'Post Code', 'Property Type']].drop_duplicates()
+    if SHEET_MANAGER:
+        dsr_records = df.fillna('').to_dict(orient='records')
+        lookup_records = df_lookup_data.fillna('').to_dict(orient='records')
+        SHEET_MANAGER.log_to_sheet(dsr_records, 'dsr_data')
+        SHEET_MANAGER.log_to_sheet(lookup_records, 'lookup_data')
+
     print_info(f"Removed duplicates from {filename}. Initial count: {initial_count}, Final count: {final_count}", mtype="INF")
     print_info(f"Clean data saved to {new_filename}", mtype="INF")
 
