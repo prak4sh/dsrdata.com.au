@@ -6,9 +6,8 @@ login.txt
 logs.txt
 token.json
 error.log
-
-
 credentials.json
 token.json
 *.log
 cookies.json
+
